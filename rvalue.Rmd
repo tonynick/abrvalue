@@ -1,0 +1,153 @@
+---
+title: "Alberta R-Value"
+author: "Tony Nickonchuk"
+date: "12/3/2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#load libraries
+library(dplyr)
+library(ggplot2)
+library(EpiEstim)
+library(incidence)
+library(lubridate)
+```
+
+## What Is the R-Value?
+
+The R-Value, or R0, or R-naught (take your pick), in simple terms, is the average number of people an infected person will go on to infect. It is not a perfect parameter, but generally, if R0 is below 1, an infection will die out in a population. If it is above 1, it will continue spreading.
+
+That is why when Premier Jason Kenney of Alberta announced new public health restrictions, he said that the province was aiming for the R0 to be below 1 before they considered lifting the restrictions.
+
+Initially, the government said they would be posting the R0 publicly as of November 30th, but [today backtracked](https://cisnfm.com/news/7489224/alberta-covid-19-r-value/) and said they will no longer be doing that. They are blaming the confusion on "human error". Because of course they are.
+
+Well, if they aren't going to publish the R0, I will. Now, I don't have access to the internal R0 being used by Alberta Health. But I do know how to run a program to calculate an estimate of it from publicly available data. So I will do that below. I likely will only be able to update it weekly, as I'm doing this on my own time, of which I have very little.
+
+Full code for this is available at my [GitHub repository](https://github.com/tonynick/abrvalue). Conversely, you can just take in the information.
+
+```{r,include=F}
+#download COVID-19 case data from AB Health
+#go here https://www.alberta.ca/stats/covid-19-alberta-statistics.htm
+#then click on "Data Export";scroll to the bottom and download
+df<-read.csv("~/Downloads/covid19dataexport.csv",stringsAsFactors = F)
+df$date<-ymd(df$Date.reported)
+df$zone<-df$Alberta.Health.Services.Zone
+df<-df%>%select(date,zone)
+cal<-df%>%filter(zone=="Calgary Zone")
+edm<-df%>%filter(zone=="Edmonton Zone")
+sou<-df%>%filter(zone=="South Zone")
+nor<-df%>%filter(zone=="North Zone")
+cen<-df%>%filter(zone=="Central Zone")
+ab<-df
+xcal<-df%>%filter(zone!="Calgary Zone")
+
+ab<-incidence(ab$date)
+cal<-incidence(cal$date)
+edm<-incidence(edm$date)
+sou<-incidence(sou$date)
+nor<-incidence(nor$date)
+cen<-incidence(cen$date)
+xcal<-incidence(xcal$date)
+
+#serial interval mean and standard deviation taken from meta-analysis of 
+#COVID serial interval here; used random effects estimate #https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7448781/
+#posterior CV default 0.3 for all; south and central could not reach that
+#due to low incidence initially; increased by 0.1 until reached
+
+abr<-estimate_R(ab,method="parametric_si",config=make_config(list(mean_si=5.19,std_si=0.418)))
+calr<-estimate_R(cal,method="parametric_si",config=make_config(list(mean_si=5.19,std_si=0.418)))
+edmr<-estimate_R(edm,method="parametric_si",config=make_config(list(mean_si=5.19,std_si=0.418)))
+sour<-estimate_R(sou,method="parametric_si",config=make_config(list(mean_si=5.19,std_si=0.418,cv_posterior=0.4)))
+norr<-estimate_R(nor,method="parametric_si",config=make_config(list(mean_si=5.19,std_si=0.418)))
+cenr<-estimate_R(cen,method="parametric_si",config=make_config(list(mean_si=5.19,std_si=0.418,cv_posterior=0.6)))
+xcalr<-estimate_R(xcal,method="parametric_si",config=make_config(list(mean_si=5.19,std_si=0.418)))
+
+#remove first 7 days as r0 is calculated in rolling 7 day windows so first 7
+#days are NA
+ab<-data.frame(date=abr$dates[-c(1:7)],abr$R)
+cal<-data.frame(date=calr$dates[-c(1:7)],calr$R)
+edm<-data.frame(date=edmr$dates[-c(1:7)],edmr$R)
+sou<-data.frame(date=sour$dates[-c(1:7)],sour$R)
+nor<-data.frame(date=norr$dates[-c(1:7)],norr$R)
+cen<-data.frame(date=cenr$dates[-c(1:7)],cenr$R)
+xcal<-data.frame(date=xcalr$dates[-c(1:7)],xcalr$R)
+
+#set to last 30 days
+today<-ymd(Sys.Date())
+cutoff<-today-31
+ab<-ab%>%filter(date>=cutoff)
+cal<-cal%>%filter(date>=cutoff)
+edm<-edm%>%filter(date>=cutoff)
+sou<-sou%>%filter(date>=cutoff)
+nor<-nor%>%filter(date>=cutoff)
+cen<-cen%>%filter(date>=cutoff)
+xcal<-xcal%>%filter(date>=cutoff)
+
+ab$time<-1:30
+cal$time<-1:30
+edm$time<-1:30
+sou$time<-1:30
+cen$time<-1:30
+nor$time<-1:30
+xcal$time<-1:30
+
+seq<-seq(1,30,by=7)
+ab$date_lab<-paste(month.abb[month(ab$date)],day(ab$date))
+cal$date_lab<-ab$date_lab
+edm$date_lab<-ab$date_lab
+sou$date_lab<-ab$date_lab
+nor$date_lab<-ab$date_lab
+cen$date_lab<-ab$date_lab
+xcal$date_lab<-ab$date_lab
+
+ab<-ab%>%select(date,date_lab,time,Mean.R.,Quantile.0.025.R.,Quantile.0.975.R.)
+names(ab)<-c("date","date_lab","time","mean","lower","upper")
+cal<-cal%>%select(date,date_lab,time,Mean.R.,Quantile.0.025.R.,Quantile.0.975.R.)
+names(cal)<-c("date","date_lab","time","mean","lower","upper")
+edm<-edm%>%select(date,date_lab,time,Mean.R.,Quantile.0.025.R.,Quantile.0.975.R.)
+names(edm)<-c("date","date_lab","time","mean","lower","upper")
+sou<-sou%>%select(date,date_lab,time,Mean.R.,Quantile.0.025.R.,Quantile.0.975.R.)
+names(sou)<-c("date","date_lab","time","mean","lower","upper")
+nor<-nor%>%select(date,date_lab,time,Mean.R.,Quantile.0.025.R.,Quantile.0.975.R.)
+names(nor)<-c("date","date_lab","time","mean","lower","upper")
+cen<-cen%>%select(date,date_lab,time,Mean.R.,Quantile.0.025.R.,Quantile.0.975.R.)
+names(cen)<-c("date","date_lab","time","mean","lower","upper")
+xcal<-xcal%>%select(date,date_lab,time,Mean.R.,Quantile.0.025.R.,Quantile.0.975.R.)
+names(xcal)<-c("date","date_lab","time","mean","lower","upper")
+```
+
+## Plots
+
+All the plots are on the same y-axis scale of 0.5 to 2.0.
+
+```{r alberta, echo=FALSE}
+ggplot(ab,aes(x=time,y=mean))+geom_line()+geom_ribbon(aes(ymin=lower,ymax=upper),alpha=0.3)+ylim(c(0.5,2))+geom_vline(xintercept=ab$time[ab$date=="2020-11-24"],col="red",lty="dashed")+geom_hline(yintercept=1,col="black",lty="dashed")+annotate("text",y=1,x=1,hjust=0,vjust=-0.5,label="Target R-Value")+annotate("text",y=1,x=ab$time[ab$date=="2020-11-24"],hjust=1,vjust=-0.5,label="New Measures",angle=90)+labs(x="Date",y="R-Value")+ggtitle("R-Value Over Last 30 Days in Alberta")+scale_x_continuous(breaks=seq,labels=ab$date_lab[seq])
+```
+
+```{r calgary, echo=FALSE}
+ggplot(cal,aes(x=time,y=mean))+geom_line()+geom_ribbon(aes(ymin=lower,ymax=upper),alpha=0.3)+ylim(c(0.5,2))+geom_vline(xintercept=cal$time[cal$date=="2020-11-24"],col="red",lty="dashed")+geom_hline(yintercept=1,col="black",lty="dashed")+annotate("text",y=1,x=1,hjust=0,vjust=-0.5,label="Target R-Value")+annotate("text",y=0.99,x=cal$time[cal$date=="2020-11-24"],hjust=1,vjust=-0.5,label="New Measures",angle=90)+labs(x="Date",y="R-Value")+ggtitle("R-Value Over Last 30 Days in Calgary Zone")+scale_x_continuous(breaks=seq,labels=cal$date_lab[seq])
+```
+
+```{r edmonton, echo=FALSE}
+ggplot(edm,aes(x=time,y=mean))+geom_line()+geom_ribbon(aes(ymin=lower,ymax=upper),alpha=0.3)+ylim(c(0.5,2))+geom_vline(xintercept=cal$time[cal$date=="2020-11-24"],col="red",lty="dashed")+geom_hline(yintercept=1,col="black",lty="dashed")+annotate("text",y=1,x=1,hjust=-0.2,vjust=-0.5,label="Target R-Value")+annotate("text",y=0.99,x=cal$time[cal$date=="2020-11-24"],hjust=1,vjust=-0.5,label="New Measures",angle=90)+labs(x="Date",y="R-Value")+ggtitle("R-Value Over Last 30 Days in Edmonton Zone")+scale_x_continuous(breaks=seq,labels=cal$date_lab[seq])
+```
+
+```{r south, echo=FALSE}
+ggplot(sou,aes(x=time,y=mean))+geom_line()+geom_ribbon(aes(ymin=lower,ymax=upper),alpha=0.3)+ylim(c(0.5,2))+geom_vline(xintercept=cal$time[cal$date=="2020-11-24"],col="red",lty="dashed")+geom_hline(yintercept=1,col="black",lty="dashed")+annotate("text",y=1,x=1,hjust=0,vjust=-0.5,label="Target R-Value")+annotate("text",y=.99,x=cal$time[cal$date=="2020-11-24"],hjust=1,vjust=-0.5,label="New Measures",angle=90)+labs(x="Date",y="R-Value")+ggtitle("R-Value Over Last 30 Days in South Zone")+scale_x_continuous(breaks=seq,labels=cal$date_lab[seq])
+```
+
+```{r north, echo=FALSE}
+ggplot(nor,aes(x=time,y=mean))+geom_line()+geom_ribbon(aes(ymin=lower,ymax=upper),alpha=0.3)+ylim(c(0.5,2))+geom_vline(xintercept=cal$time[cal$date=="2020-11-24"],col="red",lty="dashed")+geom_hline(yintercept=1,col="black",lty="dashed")+annotate("text",y=1,x=1,hjust=0,vjust=-0.5,label="Target R-Value")+annotate("text",y=.99,x=cal$time[cal$date=="2020-11-24"],hjust=1,vjust=-0.5,label="New Measures",angle=90)+labs(x="Date",y="R-Value")+ggtitle("R-Value Over Last 30 Days in North Zone")+scale_x_continuous(breaks=seq,labels=cal$date_lab[seq])
+```
+
+```{r central, echo=FALSE}
+ggplot(cen,aes(x=time,y=mean))+geom_line()+geom_ribbon(aes(ymin=lower,ymax=upper),alpha=0.3)+ylim(c(0.5,2))+geom_vline(xintercept=cal$time[cal$date=="2020-11-24"],col="red",lty="dashed")+geom_hline(yintercept=1,col="black",lty="dashed")+annotate("text",y=1,x=1,hjust=0,vjust=-0.5,label="Target R-Value")+annotate("text",y=0.99,x=cal$time[cal$date=="2020-11-24"],hjust=1,vjust=-0.5,label="New Measures",angle=90)+labs(x="Date",y="R-Value")+ggtitle("R-Value Over Last 30 Days in Central Zone")+scale_x_continuous(breaks=seq,labels=cal$date_lab[seq])
+```
+
+```{r ab exc cal, echo=FALSE}
+ggplot(xcal,aes(x=time,y=mean))+geom_line()+geom_ribbon(aes(ymin=lower,ymax=upper),alpha=0.3)+ylim(c(0.5,2))+geom_vline(xintercept=cal$time[cal$date=="2020-11-24"],col="red",lty="dashed")+geom_hline(yintercept=1,col="black",lty="dashed")+annotate("text",y=1,x=1,hjust=0,vjust=-0.5,label="Target R-Value")+annotate("text",y=0.99,x=cal$time[cal$date=="2020-11-24"],hjust=1,vjust=-0.5,label="New Measures",angle=90)+labs(x="Date",y="R-Value")+ggtitle("R-Value Over Last 30 Days in Alberta Minus Calgary Zone")+scale_x_continuous(breaks=seq,labels=cal$date_lab[seq])
+```
